@@ -1,5 +1,0 @@
-﻿  源.cpp
-D:\大三上课程\计算机网络\Lab1\Socket_client\源.cpp(16,53): warning C4996: 'localtime': This function or variable may be unsafe. Consider using localtime_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
-D:\大三上课程\计算机网络\Lab1\Socket_client\源.cpp(91,32): warning C4996: 'inet_addr': Use inet_pton() or InetPton() instead or define _WINSOCK_DEPRECATED_NO_WARNINGS to disable deprecated API warnings
-D:\大三上课程\计算机网络\Lab1\Socket_client\源.cpp(104,5): warning C4996: 'strcpy': This function or variable may be unsafe. Consider using strcpy_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
-  Socket_client.vcxproj -> D:\大三上课程\计算机网络\Lab1\Socket_client\Debug\Socket_client.exe
