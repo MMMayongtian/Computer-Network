@@ -478,6 +478,6 @@ string PacketLog(Packet* toLog) {
 
 ![image-20221119202101698](C:\Users\000\AppData\Roaming\Typora\typora-user-images\image-20221119202101698.png)
 
-如下图可见对应目录下出现了刚刚传输的图片1.jpg，且能够正常的打开，说明文件成功传输。
+如下图可见对应目录下出现了刚刚传输的图片1.jpg，且能够正常的打开，说明文件成功传输，其中由于I/O占用较长时间，因此吞吐率RPS较低。
 
 ![image-20221119202305264](C:\Users\000\AppData\Roaming\Typora\typora-user-images\image-20221119202305264.png)
