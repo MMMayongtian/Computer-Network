@@ -393,7 +393,8 @@ void sendBuf() {
 		if (wndStart >= bufIndex) {
 			return;
 		}
-		if(trans = true){
+		if(trans){
+			cout << "start trans" << endl;
 			trans = false;
 			clockStart = clock();
 			for (int i = wndStart; i < wndEnd; i++) {
@@ -402,14 +403,22 @@ void sendBuf() {
 			}
 		}
 		if (recvPacket(&recvP) && checkACK(&recvP)) {
-			wndStart = recvP.Ack;
+			wndPointer = recvP.Ack;
 			sendSeq = recvP.Ack;
-			wndEnd = (wndStart + WND_SIZE) > bufIndex ? bufIndex : (wndStart + WND_SIZE);
-			trans = true;
+			if (wndPointer == wndEnd) {
+				wndStart = wndEnd;
+				wndPointer++;
+				wndEnd = (wndStart + WND_SIZE) > bufIndex ? bufIndex : (wndStart + WND_SIZE);
+				trans = true;
+			}
 			continue;
 		}
 		clockEnd = clock();
 		if (clockEnd - clockStart > 500) {
+			wndStart = wndPointer;
+			wndPointer++;
+			wndEnd = (wndStart + WND_SIZE) > bufIndex ? bufIndex : (wndStart + WND_SIZE);
+			cout << "time out" << endl;
 			trans = true;
 		}
 	}
