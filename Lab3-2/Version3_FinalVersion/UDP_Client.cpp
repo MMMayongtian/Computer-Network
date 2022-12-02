@@ -1,4 +1,281 @@
-#include"Packet.h"
+#pragma once
+#include <WinSock2.h>
+#pragma comment(lib, "ws2_32.lib")  //加载 ws2_32.dll
+#include<iostream>
+#include<time.h>
+#include<string>
+#include<fstream>
+#include<thread>
+using namespace std;
+
+#define SERVER_PORT 3000
+#define SERVER_IP "127.0.0.1"
+#define BUF_SIZE 1024
+#define RETRANSMISSION_TIMES 10
+#define WAIT_TIME 200
+#define MSL 200
+
+#define CLOSE 0 
+#define SYN_SENT 2
+#define ESTABLISHED 4
+#define FIN_WAIT_1 5
+#define FIN_WAIT_2 7
+#define TIME_WAIT 9
+#define WND_SIZE 10
+#pragma pack(1)	//按字节对齐
+class Packet	//报文格式
+{
+public:
+	//SYN=0x01  ACk=0x02  FIN=0x04  PACKET=0x08  StartFile=0x10  EndFile=0x20  File=0x40
+	int Flags = 0;		//标志位
+	DWORD SendIP;		//发送端IP
+	DWORD RecvIP;		//接收端IP
+	u_short Port;		//端口
+	u_short	Protocol;	//协议类型
+	int Seq = -1;
+	int Ack = -1;
+	int index = -1;			//文件分片传输 第几片
+	int length = -1;			//Data段长度
+	//int window = -1;
+	u_short checksum;	//校验和
+	char Data[BUF_SIZE];//报文数据段
+};
+#pragma pack()//恢复4Byte编址格式
+
+SOCKET sockClient;
+struct sockaddr_in sockAddr;
+struct sockaddr_in sockAddrS;
+int addr_len = sizeof(struct sockaddr_in);
+
+string path = "C:\\Users\\000\\Desktop\\测试文件\\测试文件\\";
+string nowTime;
+string Log;
+int state = CLOSE;		//客户端状态
+int sendSeq = 0;		//客户端消息序列号
+int PacketNum = 0;		//需要分片数量
+int data_p = 0;			//数据存储位置
+clock_t clockStart;		//计时器
+clock_t clockEnd;
+int wndStart = 0;
+int wndEnd = 0;
+int wndPointer;
+
+int bufIndex = 0;
+bool retrans = false;
+char buf[10000][1058];
+bool bufStop = false;
+string getTime() {
+	time_t timep;
+	time(&timep); //获取time_t类型的当前时间
+	char tmp[64];
+	strftime(tmp, sizeof(tmp), "%Y/%m/%d %H:%M:%S", localtime(&timep));//对日期和时间进行格式化
+	return tmp;
+}
+//标志位设置与检查
+bool checkSYN(Packet* t)
+{
+	if (t->Flags & 0x01)
+		return 1;
+	return 0;
+}
+void setSYN(Packet* t)
+{
+	t->Flags |= 0x01;
+}
+bool checkACK(Packet* t) {
+	if (t->Flags & 0x02)
+		return 1;
+	return 0;
+}
+void setACK(Packet* t, Packet* u) {
+	t->Flags |= 0x02;
+	t->Ack = u->Seq + 1;
+}
+bool checkFIN(Packet* t)
+{
+	if (t->Flags & 0x04)
+		return 1;
+	return 0;
+}
+void setFIN(Packet* t)
+{
+	t->Flags |= 0x04;
+}
+bool checkPacket(Packet* t) {
+	if (t->Flags & 0x08)
+		return 1;
+	return 0;
+}
+void setPacket(Packet* t) {
+	t->Flags |= 0x08;
+}
+bool checkStart(Packet* t)
+{
+	if (t->Flags & 0x10)//flag的右第二位是0还是1
+		return 1;
+	return 0;
+}
+void setStart(Packet* t)
+{
+	t->Flags |= 0x10;
+}
+bool checkEnd(Packet* t)
+{
+	if (t->Flags & 0x20)
+		return 1;
+	return 0;
+}
+void setEnd(Packet* t)
+{
+	t->Flags |= 0x20;
+}
+bool checkFile(Packet* t)
+{
+	if (t->Flags & 0x40)
+		return 1;
+	return 0;
+}
+void setFile(Packet* t)
+{
+	t->Flags |= 0x40;
+}
+//校验和
+bool checkCheckSum(Packet* t) {
+	int sum = 0;
+	u_char* packet = (u_char*)t;
+	for (int i = 0; i < 16; i++) {
+		sum += packet[2 * i] << 8 + packet[2 * i + 1];
+		while (sum > 0xFFFF) {
+			int sumh = sum >> 16;
+			int suml = sum & 0xFFFF;
+			sum = sumh + suml;
+		}
+	}
+	//校验和与报文中该字段相加，等于0xFFFF则校验成功
+	if (t->checksum + (u_short)sum == 0xFFFF) {
+		return true;
+	}
+	return false;
+}
+void setCheckSum(Packet* t) {
+	int sum = 0;
+	u_char* packet = (u_char*)t;
+	for (int i = 0; i < 16; i++)//报文的前32字节256bit
+	{
+		sum += packet[2 * i] << 8 + packet[2 * i + 1];
+		while (sum > 0xFFFF) {
+			int sumh = sum >> 16;
+			int suml = sum & 0xFFFF;
+			sum = sumh + suml;
+		}
+	}
+	t->checksum = ~(u_short)sum;//按位取反
+}
+//数据包日志
+string PacketLog(Packet* toLog) {
+	string log = "[ ";
+	if (checkSYN(toLog)) {
+		log += "SYN ";
+	}
+	if (checkACK(toLog)) {
+		log += "ACK ";
+	}
+	if (checkFIN(toLog)) {
+		log += "FIN ";
+	}
+	if (checkStart(toLog)) {
+		log += "SF ";
+	}
+	if (checkFile(toLog)) {
+		log += "FILE ";
+	}
+	if (checkEnd(toLog)) {
+		log += "EF ";
+	}
+	log += "] ";
+	log += "Seq=";
+	log += to_string(toLog->Seq);
+	if (checkACK(toLog)) {
+		log += " Ack=";
+		log += to_string(toLog->Ack);
+	}
+	if (checkFile(toLog)) {
+		log += " Index=";
+		log += to_string(toLog->index);
+	}
+	log += " CheckNum=";
+	log += to_string(toLog->checksum);
+	return log;
+}
+
+
+void init()
+{
+	//加载套接字库
+	WSADATA wsaData;
+	//加载dll文件 版本 2.2   Scoket 库   
+	int err = WSAStartup(MAKEWORD(2, 2), &wsaData);
+	if (err != 0) {
+		//找不到 winsock.dll 
+		nowTime = getTime();
+		cout << nowTime << " [ ERROR ] " << "WSAStartup failed with error:" << err << endl;
+		return;
+	}
+	if (LOBYTE(wsaData.wVersion) != 2 || HIBYTE(wsaData.wVersion) != 2)
+	{
+		nowTime = getTime();
+		cout << nowTime << " [ ERROR ] " << "Could not find a usable version of Winsock.dll" << endl;
+		WSACleanup();
+		return;
+	}
+
+	sockClient = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (sockClient == INVALID_SOCKET) {
+		nowTime = getTime();
+		cout << nowTime << " [ ERROR ] " << "Socket creation failed!" << endl;
+		return;
+	}
+	//设置套接字为非阻塞模式
+	int iMode = 1; //1：非阻塞，0：阻塞 
+	ioctlsocket(sockClient, FIONBIO, (u_long FAR*) & iMode);//非阻塞设置 
+
+	sockAddr.sin_addr.S_un.S_addr = inet_addr("127.0.0.1");
+	sockAddr.sin_family = AF_INET;
+	sockAddr.sin_port = htons(4001);
+
+	nowTime = getTime();
+	cout << nowTime << " [ INFO  ] " << "Client is created successfully" << endl;
+}
+void close() {
+	closesocket(sockClient);//关闭socket
+	nowTime = getTime();
+	cout << nowTime << " [ INFO  ] " << "The Socket was successfully closed!" << endl;
+	WSACleanup();
+	nowTime = getTime();
+	cout << nowTime << " [ INFO  ] " << "The WSA was successfully cleaned up" << endl;
+}
+//收发包
+void sendPacket(Packet* sendP) {
+	setPacket(sendP);
+	setCheckSum(sendP);
+	//sendP->Flags |= 0x40;
+	if (sendto(sockClient, (char*)sendP, sizeof(Packet), 0, (struct sockaddr*)&sockAddr, sizeof(sockaddr)) != SOCKET_ERROR) {
+		//nowTime = getTime();
+		//Log = PacketLog(sendP);
+		//cout << nowTime << " [ SEND  ] " << Log << endl;
+	}
+}
+bool recvPacket(Packet* recvP) {
+	memset(recvP, 0, sizeof(sizeof(&recvP)));
+	int re = recvfrom(sockClient, (char*)recvP, sizeof(Packet), 0, (struct sockaddr*)&sockAddr, &addr_len);
+	if (re != -1 && checkCheckSum(recvP)) {
+		//nowTime = getTime();
+		//Log = PacketLog(recvP);
+		//cout << nowTime << " [ RECV  ] " << Log << endl;
+		return true;
+	}
+	return false;
+}
 int discard = 100;
 bool stop = false;
 bool breakConnection() {
@@ -180,6 +457,7 @@ void sendBuf() {
 				cout << nowTime << " [ GBNS  ] " << "r windowsStart=" << wndStart << " wndEnd=" << wndEnd << " Seq=" << ((Packet*)buf[i])->Seq << endl;
 			}
 		}
+		//_sleep(5);
 	}
 	cout << nowTime << " [ WSEND ] " << "The buffer has been sent!" << endl;
 	return;
@@ -208,7 +486,7 @@ void wndSlide() {
 				wndStart = recvP.Ack;
 				stop = true;
 				wndEnd = (wndStart + WND_SIZE) >= bufIndex ? bufIndex : (wndStart + WND_SIZE);
-				if (nowSize >= AckSize) {
+				if (nowSize >= 6) {
 					AckSize = nowSize;
 				}
 				else {
@@ -221,7 +499,7 @@ void wndSlide() {
 			}
 		}
 		clockEnd = clock();
-		if (clockEnd - clockStart > 200) {
+		if (clockEnd - clockStart > 250) {
 			retrans = true;
 			cout << nowTime << " [ WSEND ] " << "ACK receive timeout!" << endl;
 			clockStart = clock();
