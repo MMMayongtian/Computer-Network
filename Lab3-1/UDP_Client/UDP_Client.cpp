@@ -491,9 +491,7 @@ int main() {
 
 	while (Control) {
 		nowTime = getTime();
-		cout << nowTime << " [ RINC  ] " << "Please enter the Server IP address: ";
 		char IP[20] = "127.0.0.1";
-		cin >> IP;
 		sockAddr.sin_addr.s_addr = inet_addr(IP);
 
 		if (buildConnection()) {

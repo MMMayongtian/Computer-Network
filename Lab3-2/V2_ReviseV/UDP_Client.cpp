@@ -1,3 +1,4 @@
+#pragma once
 #include <WinSock2.h>
 #pragma comment(lib, "ws2_32.lib")  //加载 ws2_32.dll
 #include<iostream>
@@ -20,7 +21,7 @@ using namespace std;
 #define FIN_WAIT_1 5
 #define FIN_WAIT_2 7
 #define TIME_WAIT 9
-#define WND_SIZE 100
+#define MIN_WND_SIZE 5
 #pragma pack(1)	//按字节对齐
 class Packet	//报文格式
 {
@@ -33,9 +34,9 @@ public:
 	u_short	Protocol;	//协议类型
 	int Seq = -1;
 	int Ack = -1;
-	int index = -1;			//文件分片传输 第几片
+	int index = -1;			//文件片索引
 	int length = -1;			//Data段长度
-	//int window = -1;
+	int window = -1;
 	u_short checksum;	//校验和
 	char Data[BUF_SIZE];//报文数据段
 };
@@ -45,24 +46,31 @@ SOCKET sockClient;
 struct sockaddr_in sockAddr;
 struct sockaddr_in sockAddrS;
 int addr_len = sizeof(struct sockaddr_in);
+int port = 4000;
 
 string path = "C:\\Users\\000\\Desktop\\测试文件\\测试文件\\";
 string nowTime;
 string Log;
 int state = CLOSE;		//客户端状态
 int sendSeq = 0;		//客户端消息序列号
-char dataToSend[10000][BUF_SIZE];	//要发送的数据
 int PacketNum = 0;		//需要分片数量
 int data_p = 0;			//数据存储位置
 clock_t clockStart;		//计时器
 clock_t clockEnd;
-int wndStart;
-int wndEnd;
+int wndStart = 0;
+int wndEnd = 0;
 int wndPointer;
-int Seq = 0;
 int bufIndex = 0;
 bool retrans = false;
-char buf[10000][1058];
+char buf[10000][1062];
+bool bufStop = false;
+
+int wndSize = 15;
+bool stop = false;
+
+int discard = 100;
+int ssthresh = 20;
+int states = 0; //1 慢启动  2 拥塞避免  3 快速恢复
 
 string getTime() {
 	time_t timep;
@@ -140,7 +148,7 @@ void setFile(Packet* t)
 	t->Flags |= 0x40;
 }
 //校验和
-bool checkCheckSum(Packet* t){
+bool checkCheckSum(Packet* t) {
 	int sum = 0;
 	u_char* packet = (u_char*)t;
 	for (int i = 0; i < 16; i++) {
@@ -157,7 +165,7 @@ bool checkCheckSum(Packet* t){
 	}
 	return false;
 }
-void setCheckSum(Packet* t){
+void setCheckSum(Packet* t) {
 	int sum = 0;
 	u_char* packet = (u_char*)t;
 	for (int i = 0; i < 16; i++)//报文的前32字节256bit
@@ -207,11 +215,58 @@ string PacketLog(Packet* toLog) {
 	log += to_string(toLog->checksum);
 	return log;
 }
+
+
+void init()
+{
+	//加载套接字库
+	WSADATA wsaData;
+	//加载dll文件 版本 2.2   Scoket 库   
+	int err = WSAStartup(MAKEWORD(2, 2), &wsaData);
+	if (err != 0) {
+		//找不到 winsock.dll 
+		nowTime = getTime();
+		cout << nowTime << " [ ERROR ] " << "WSAStartup failed with error:" << err << endl;
+		return;
+	}
+	if (LOBYTE(wsaData.wVersion) != 2 || HIBYTE(wsaData.wVersion) != 2)
+	{
+		nowTime = getTime();
+		cout << nowTime << " [ ERROR ] " << "Could not find a usable version of Winsock.dll" << endl;
+		WSACleanup();
+		return;
+	}
+
+	sockClient = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (sockClient == INVALID_SOCKET) {
+		nowTime = getTime();
+		cout << nowTime << " [ ERROR ] " << "Socket creation failed!" << endl;
+		return;
+	}
+	//设置套接字为非阻塞模式
+	int iMode = 1; //1：非阻塞，0：阻塞 
+	ioctlsocket(sockClient, FIONBIO, (u_long FAR*) & iMode);//非阻塞设置 
+
+	sockAddr.sin_addr.S_un.S_addr = inet_addr("127.0.0.1");
+	sockAddr.sin_family = AF_INET;
+	sockAddr.sin_port = htons(4001);
+
+	nowTime = getTime();
+	cout << nowTime << " [ INFO  ] " << "Client is created successfully" << endl;
+}
+void close() {
+	closesocket(sockClient);//关闭socket
+	nowTime = getTime();
+	cout << nowTime << " [ INFO  ] " << "The Socket was successfully closed!" << endl;
+	WSACleanup();
+	nowTime = getTime();
+	cout << nowTime << " [ INFO  ] " << "The WSA was successfully cleaned up" << endl;
+}
 //收发包
 void sendPacket(Packet* sendP) {
+	sendP->window = wndSize;
 	setPacket(sendP);
 	setCheckSum(sendP);
-	//sendP->Flags |= 0x40;
 	if (sendto(sockClient, (char*)sendP, sizeof(Packet), 0, (struct sockaddr*)&sockAddr, sizeof(sockaddr)) != SOCKET_ERROR) {
 		//nowTime = getTime();
 		//Log = PacketLog(sendP);
@@ -223,56 +278,13 @@ bool recvPacket(Packet* recvP) {
 	int re = recvfrom(sockClient, (char*)recvP, sizeof(Packet), 0, (struct sockaddr*)&sockAddr, &addr_len);
 	if (re != -1 && checkCheckSum(recvP)) {
 		//nowTime = getTime();
+
 		//Log = PacketLog(recvP);
 		//cout << nowTime << " [ RECV  ] " << Log << endl;
+
 		return true;
 	}
 	return false;
-}
-
-bool stopWaitRecv(Packet* recvP, Packet* sendP){
-	while (1){
-		if (recvPacket(recvP)) {		//收到对方发来的消息recvP
-			sendP->Seq = sendSeq++;
-			setACK(sendP, recvP);	//回复对于收到消息recvP的ack消息sendP
-			sendPacket(sendP);
-			memset((char*)sendP, 0, sizeof(Packet));
-			return 1;
-		}
-	}
-	return 0;
-}
-bool stopWaitSend(Packet* sendP, Packet* recvP) {
-	sendPacket(sendP);
-	if (checkFIN(sendP) && state != FIN_WAIT_1) {
-		state = FIN_WAIT_1;
-		nowTime = getTime();
-		cout << nowTime << " [ STATE ] " << "Enter the " << state << " state!" << endl;
-	}
-
-	clockStart = clock();	//开始计时
-	int retransNum = 0;		//重发次数
-	while (1){
-		if (recvPacket(recvP)) {
-			if (checkACK(recvP) && recvP->Ack == (sendP->Seq + 1)){	//收到对sendP的确认报文
-				return 1;
-			}
-		}
-		clockEnd = clock();
-		if (retransNum == RETRANSMISSION_TIMES) {	//到达最大重发次数
-			nowTime = getTime();
-			cout << nowTime << " [ TIMEO ] " << "The number of retransmission times is too many, fail to send!" << endl;
-			return 0;
-		}
-		if ((clockEnd - clockStart)>= WAIT_TIME){	//超时重发
-			retransNum++;
-			nowTime = getTime();
-			cout << nowTime << " [ TIMEO ] " << "Too long waiting time, retrans the "<< retransNum <<" time!" << endl;
-			sendPacket(sendP);
-			clockStart = clock();
-		}
-	}
-	return 0;//发送失败
 }
 
 bool breakConnection() {
@@ -294,7 +306,7 @@ bool breakConnection() {
 	int retransNum = 0;		//重发次数
 	while (1) {
 		if (recvPacket(&recvFIN)) {
-			if (checkACK(&recvFIN) &&checkFIN(&recvFIN) && recvFIN.Ack == sendSeq) {	//收到对sendP的确认报文
+			if (checkACK(&recvFIN) && checkFIN(&recvFIN) && recvFIN.Ack == sendSeq) {	//收到对sendP的确认报文
 				sendACK.Seq = sendSeq;
 				setACK(&sendACK, &recvFIN);	//回复对于收到消息recvP的ack消息sendP
 				sendPacket(&sendACK);
@@ -403,7 +415,7 @@ bool readFile(char* fileName) {
 			sendBuf.length = data_p;
 			sendBuf.Seq = bufIndex;
 			setFile(&sendBuf);
-			memcpy(buf[bufIndex], &sendBuf, 1058);
+			memcpy(buf[bufIndex], &sendBuf, sizeof(Packet));
 			memset(&sendBuf, 0, sizeof(sizeof(&sendBuf)));
 			bufIndex++;
 			PacketNum++;
@@ -416,114 +428,98 @@ bool readFile(char* fileName) {
 	sendBuf.Seq = bufIndex;
 	setFile(&sendBuf);
 	setEnd(&sendBuf);
-	memcpy(buf[bufIndex++], &sendBuf, 1058);
+	memcpy(buf[bufIndex++], &sendBuf, sizeof(Packet));
 	memset(&sendBuf, 0, sizeof(sizeof(&sendBuf)));
 
 	in.close();
 	nowTime = getTime();
-	cout << nowTime << " [ FIN   ] " << "File " << fileName << " input succeeded!" << endl;
+	cout << nowTime << " [ INFO  ] " << "File " << fileName << " input succeeded!" << endl;
 	return 1;
 }
-//bool readFile(char* fileName) {
-//	nowTime = getTime();
-//	cout << nowTime << " [ FIN   ] " << "Start to input file: " << fileName << endl;
-//
-//	string filename(fileName);
-//	ifstream in(filename, ifstream::binary);
-//	if (!in){
-//		nowTime = getTime();
-//		cout << nowTime << " [ ERROR ] " << "File opening failed!" << endl;
-//		return 0;
-//	}
-//
-//	PacketNum = 0;
-//	data_p = 0;
-//	char Char = in.get();	//读入字符char
-//	while (in) {
-//		dataToSend[PacketNum][data_p] = Char;	//文件内容存入dataToSend中
-//		data_p++;
-//		if (data_p % BUF_SIZE == 0) {	//到达最大容量 下一个数据包
-//			PacketNum++;
-//			data_p = 0;
-//		}
-//		Char = in.get();
-//	}
-//	in.close();
-//	nowTime = getTime();
-//	cout << nowTime << " [ FIN   ] " << "File " << fileName << " input succeeded!" << endl;
-//	return 1;
-//}
-
-void sendfile() {
+void sendBuf() {
 	int i = wndEnd;
 	int end = wndEnd;
-	while (i < bufIndex -1) {
-		if (wndEnd > bufIndex) {
-			wndEnd = bufIndex;
+	while (!bufStop) {
+		if (stop) {
+			continue;
 		}
-		if (retrans) {
-			retrans = false;
-			end = wndEnd;
-			i = wndStart;
-			for (; i < end && i < bufIndex; i++) {
+		if (!retrans) {
+			if (i >= bufIndex) {
+				continue;
+			}
+			if (i < wndStart + wndSize) {
 				sendPacket((Packet*)buf[i]);
-				cout << "wndEnd: "<<end<<" bufIndex: "<<bufIndex<<" Seq: " << ((Packet*)buf[i])->Seq << " index: " << ((Packet*)buf[i])->index <<" i: " <<i<< endl;
+				nowTime = getTime();
+				cout << nowTime << " [ WNDP  ] " << "states:" << states << " windowsStart=" << wndStart << " wndSize=" << wndSize << " Seq=" << ((Packet*)buf[i])->Seq << endl;
+				i++;
 			}
 		}
+		else {
+			retrans = false;
+			i = wndStart;
+			//cout<<"reset i from wndStart"<<endl;
+		}
 	}
-	cout << "final send!" << endl;
+	cout << nowTime << " [ WSEND ] " << "The buffer has been sent!" << endl;
 	return;
-	//if (wndEnd > bufIndex) {
-	//	wndEnd = bufIndex;
-	//}
-	//for (int i = wndStart; i < wndEnd; i++) {
-	//	sendPacket((Packet*)buf[i]);
-	//}
 }
-void recvFACK() {
-	
+
+void wndSlide() {
+	states = 1;
+	bufStop = false;
 	wndStart = sendSeq;
-	wndEnd = wndStart + WND_SIZE;
-	thread sendThread(sendfile);//第一个参数为函数名，第二个参数为该函数的第一个参数，如果该函数接收多个参数就依次写在后面。此时线程开始执行。
-	//sendThread.join();//此时主线程被阻塞直至子线程执行结束。
+	wndEnd = wndStart + wndSize;
+	thread sendThread(sendBuf);	//启动Buf发送线程
 	Packet recvP;
-	wndPointer = wndStart + 1;
+	int ackCount = 0;
+	int ackLast = 2;
 	clockStart = clock();
 	retrans = true;
+	int lastWnd = wndStart;
 	while (true) {
-		if (recvPacket(&recvP)) {
-			if (checkACK(&recvP) && recvP.Ack >= wndPointer) {
-				if (recvP.Ack >= bufIndex + 1) {
-					wndEnd = bufIndex;
-					sendSeq = bufIndex;
+		if (recvPacket(&recvP) && checkACK(&recvP)) {
+			if (recvP.Ack == ackLast) {
+				ackCount++;
+				if (ackCount >= 3) {
+					stop = true;
+					retrans = true;
+					wndStart = ackLast;
+					clockStart = clock();
+					stop = false;
+				}
+			}
+			else if (recvP.Ack >= wndStart) {
+				if (recvP.Ack >= bufIndex) {
+					bufStop = true;
 					sendThread.join();
 					return;
 				}
+				stop = true;
+				ackCount = 0;
+				ackLast = recvP.Ack;
+				sendSeq = recvP.Ack;
 				wndStart = recvP.Ack;
-				wndPointer = wndStart + 1;
-				wndEnd = (wndStart + WND_SIZE) >= bufIndex ? bufIndex : (wndStart + WND_SIZE);
+				stop = false;
 				clockStart = clock();
-				retrans = true;
 				continue;
 			}
 		}
 		clockEnd = clock();
 		if (clockEnd - clockStart > 500) {
+			stop = true;
 			retrans = true;
+			wndStart = ackLast;
+			cout << nowTime << " [ WSEND ] " << "ACK receive timeout!" << endl;
+			stop = false;
 			clockStart = clock();
 		}
-
-		if (wndPointer == bufIndex + 1) {
-			sendSeq = bufIndex;
-			sendThread.join();
-			return;
-		}
 	}
-
 }
+
 int sendFile(char* fileName) {
-	cout << "start to send File" << endl;
 	if (state != ESTABLISHED) {
+		nowTime = getTime();
+		cout << nowTime << " [ ERROR ] " << "Connection not established! " << fileName << endl;
 		return 0;
 	}
 	if (!readFile(fileName)) {
@@ -543,102 +539,36 @@ int sendFile(char* fileName) {
 	}
 
 	nowTime = getTime();
-	cout << nowTime << " [ FSEND ] " << " Send the name of file: " << fileName << endl;
+	cout << nowTime << " [ FSEND ] " << "Send the name of file: " << fileName << endl;
 	sendPacket(&sendFileName);
-
+	clock_t start = clock();
+	clock_t end;
 	while (1) {
 		if (recvPacket(&recvACK)) {
 			if (checkACK(&recvACK) && recvACK.Ack == sendSeq) {
 				break;
 			}
 		}
+		end = clock();
+		if (end - start > 1000) {
+			nowTime = getTime();
+			cout << nowTime << " [ TIMEO ] " << "Time out! Stop to send file: " << fileName << endl;
+			return 0;
+		}
 	}
+
 	nowTime = getTime();
 	cout << nowTime << " [ FSEND ] " << "Start to send file: " << fileName << endl;
-	//if (!stopWaitSend(&sendFileName, &recvACK)) {
-	//	nowTime = getTime();
-	//	cout << nowTime << " [ ERROR ] " << "File send failure!" << endl;
-	//	return 0;
-	//}
-	recvFACK();
-	//for (int i = 0; i <= PacketNum; i++) {
-	//	Packet sendFile;
-	//	sendFile.Seq = sendSeq++;
-	//	sendFile.index = i;
-	//	setFile(&sendFile);
-	//	if (i == PacketNum) {
-	//		setEnd(&sendFile);
-	//		sendFile.length = data_p;
-	//		for (int j = 0; j < data_p; j++) {
-	//			sendFile.Data[j] = dataToSend[i][j];
-	//		}
-	//	}
-	//	else {
-	//		sendFile.length = BUF_SIZE;
-	//		for (int j = 0; j < BUF_SIZE; j++) {
-	//			sendFile.Data[j] = dataToSend[i][j];
-	//		}
-	//	}
-	//	if (!stopWaitSend(&sendFile, &recvACK)) {
-	//		nowTime = getTime();
-	//		cout << nowTime << " [ ERROR ] " << "File send failure!" << endl;
-	//		return 0;
-	//	}
-	//}
-	//nowTime = getTime();
-	//cout << nowTime << " [ FSEND ] " << "File " << fileName << " sent successfully!" << endl;
-	////吞吐率计算
-	//clock_t timeEnd = clock();
-	//double totalTime = (double)(timeEnd - timeStart) / CLOCKS_PER_SEC;
-	//double RPS = (double)(PacketNum + 2) * sizeof(Packet) * 8 / totalTime / 1024 / 1024;
-	//nowTime = getTime();
-	//cout << nowTime << " [ INFO  ] " << "Total time: " << totalTime << "s\t\tRPS: " << RPS << " Mbps" << endl;;
-}
-
-void init()
-{
-	//加载套接字库
-	WSADATA wsaData;
-	//加载dll文件 版本 2.2   Scoket 库   
-	int err = WSAStartup(MAKEWORD(2, 2), &wsaData);
-	if (err != 0) {
-		//找不到 winsock.dll 
-		nowTime = getTime();
-		cout << nowTime << " [ ERROR ] " << "WSAStartup failed with error:" << err << endl;
-		return;
-	}
-	if (LOBYTE(wsaData.wVersion) != 2 || HIBYTE(wsaData.wVersion) != 2)
-	{
-		nowTime = getTime();
-		cout << nowTime << " [ ERROR ] " << "Could not find a usable version of Winsock.dll" << endl;
-		WSACleanup();
-		return;
-	}
-
-	sockClient = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-	if (sockClient == INVALID_SOCKET) {
-		nowTime = getTime();
-		cout << nowTime << " [ ERROR ] " << "Socket creation failed!" << endl;
-		return;
-	}
-	//设置套接字为非阻塞模式
-	int iMode = 1; //1：非阻塞，0：阻塞 
-	ioctlsocket(sockClient, FIONBIO, (u_long FAR*) & iMode);//非阻塞设置 
-
-	sockAddr.sin_addr.S_un.S_addr = inet_addr("127.0.0.1");
-	sockAddr.sin_family = AF_INET;
-	sockAddr.sin_port = htons(4000);
-
+	clock_t RPS_s = clock();
+	wndSlide();
+	clock_t PRS_d = clock();
 	nowTime = getTime();
-	cout << nowTime << " [ INFO  ] " << "Client is created successfully" << endl;
-}
-void close() {
-	closesocket(sockClient);//关闭socket
+	cout << nowTime << " [ FSEND ] " << "File " << fileName << " sent successfully!" << endl;
+	//吞吐率计算
+	double totalTime = (double)(PRS_d - RPS_s) / CLOCKS_PER_SEC;
+	double RPS = (double)(PacketNum) * sizeof(Packet) * 8 / totalTime / 1024 / 1024;
 	nowTime = getTime();
-	cout << nowTime << " [ INFO  ] " << "The Socket was successfully closed!" << endl;
-	WSACleanup();
-	nowTime = getTime();
-	cout << nowTime << " [ INFO  ] " << "The WSA was successfully cleaned up" << endl;
+	cout << nowTime << " [ INFO  ] " << "Total time: " << totalTime << "s\t\tRPS: " << RPS << " Mbps" << endl;
 }
 
 int main() {
@@ -651,22 +581,21 @@ int main() {
 	cin >> Control;
 
 	while (Control) {
-		//nowTime = getTime();
+		nowTime = getTime();
 		//cout << nowTime << " [ RINC  ] " << "Please enter the Server IP address: ";
-		//char IP[20] = "127.0.0.1";
+		char IP[20] = "127.0.0.1";
 		//cin >> IP;
-		//sockAddr.sin_addr.s_addr = inet_addr(IP);
+		sockAddr.sin_addr.s_addr = inet_addr(IP);
 
 		if (buildConnection()) {
-
 			nowTime = getTime();
 			cout << nowTime << " [ RINC  ] " << "Send File(1) Or Disconnect(0) :\t";
 			cin >> Control;
-			while(Control){
+			while (Control) {
 				nowTime = getTime();
-				//cout << nowTime << " [ RINC  ] " << "Please enter the name of file to send: ";
+				cout << nowTime << " [ RINC  ] " << "Please enter the name of file to send: ";
 				char fileName[20] = "1.jpg";
-				//cin >> fileName;
+				cin >> fileName;
 				sendFile(fileName);
 
 				nowTime = getTime();
@@ -681,4 +610,4 @@ int main() {
 	}
 
 	close();
-} 
+}

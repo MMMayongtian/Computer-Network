@@ -1,7 +1,6 @@
-//#include "Packet.h"
 #pragma once
 #include <WinSock2.h>
-#pragma comment(lib, "ws2_32.lib")  //¼ÓÔØ ws2_32.dll
+#pragma comment(lib, "ws2_32.lib")  //åŠ è½½ ws2_32.dll
 #include<time.h>
 #include<ostream>
 #include<fstream>
@@ -11,7 +10,7 @@ using namespace std;
 #define SERVER_PORT 3000
 #define BUF_SIZE 1024
 #define RETRANSMISSION_TIMES 10
-#define WAIT_TIME 100
+#define WAIT_TIME 200
 
 #define CLOSE 0 
 #define LISTEN 1
@@ -19,51 +18,53 @@ using namespace std;
 #define ESTABLISHED 4
 #define CLOSE_WAIT 6
 #define LAST_ACK 8
-#define WND_SIZE 100
+#define WND_SIZE 5
 
-#pragma pack(1)//°´×Ö½Ú¶ÔÆë
-struct Packet//±¨ÎÄ¸ñÊ½
+#pragma pack(1)//æŒ‰å­—èŠ‚å¯¹é½
+struct Packet//æŠ¥æ–‡æ ¼å¼
 {
 	//SYN=0x01  ACK=0x02  FIN=0x04  PACKET=0x08  StartFile=0x10  EndFile=0x20 File=0x40
-	int Flags = 0;		//±êÖ¾Î»
-	DWORD SendIP;		//·¢ËÍ¶ËIP
-	DWORD RecvIP;		//½ÓÊÕ¶ËIP
-	u_short Port;		//¶Ë¿Ú
-	u_short	Protocol;	//Ğ­ÒéÀàĞÍ
+	int Flags = 0;		//æ ‡å¿—ä½
+	DWORD SendIP;		//å‘é€ç«¯IP
+	DWORD RecvIP;		//æ¥æ”¶ç«¯IP
+	u_short Port;		//ç«¯å£
+	u_short	Protocol;	//åè®®ç±»å‹
 	int Seq = -1;
 	int Ack = -1;
-	int index = -1;			//ÎÄ¼ş·ÖÆ¬´«Êä µÚ¼¸Æ¬
-	int length = -1;			//Data¶Î³¤¶È
-	//int window = -1;
-	u_short checksum;	//Ğ£ÑéºÍ
-	char Data[BUF_SIZE];//±¨ÎÄÊı¾İ¶Î
+	int index = -1;			//æ–‡ä»¶ç‰‡ç´¢å¼•
+	int length = -1;			//Dataæ®µé•¿åº¦
+	int window = -1;
+	u_short checksum;	//æ ¡éªŒå’Œ
+	char Data[BUF_SIZE];//æŠ¥æ–‡æ•°æ®æ®µ
 };
-#pragma pack()//»Ö¸´4Byte±àÖ·¸ñÊ½
+#pragma pack()//æ¢å¤4Byteç¼–å€æ ¼å¼
 
 SOCKET sockServer;
 struct sockaddr_in sockAddr;
 int addr_len = sizeof(struct sockaddr_in);
+int port = 4000;
 
 string nowTime;
 string Log;
 
-int state = CLOSE;		//×´Ì¬
-int sendSeq = 0;		//ÏûÏ¢ĞòÁĞºÅ
+int state = CLOSE;		//çŠ¶æ€
+int sendSeq = 0;		//æ¶ˆæ¯åºåˆ—å·
 
-char buf[10000][1058];
+char buf[10000][1062];
 int bufIndex = 0;
-clock_t clockStart;		//¼ÆÊ±Æ÷
+clock_t clockStart;		//è®¡æ—¶å™¨
 clock_t clockEnd;
 
 int wndStart;
 int wndEnd;
 int wndPointer;
 
+int wndSize = 0;
 string getTime() {
 	time_t timep;
-	time(&timep); //»ñÈ¡time_tÀàĞÍµÄµ±Ç°Ê±¼ä
+	time(&timep); //è·å–time_tç±»å‹çš„å½“å‰æ—¶é—´
 	char tmp[64];
-	strftime(tmp, sizeof(tmp), "%Y/%m/%d %H:%M:%S", localtime(&timep));//¶ÔÈÕÆÚºÍÊ±¼ä½øĞĞ¸ñÊ½»¯
+	strftime(tmp, sizeof(tmp), "%Y/%m/%d %H:%M:%S", localtime(&timep));//å¯¹æ—¥æœŸå’Œæ—¶é—´è¿›è¡Œæ ¼å¼åŒ–
 	return tmp;
 }
 
@@ -92,7 +93,7 @@ void setACK(Packet* t, int Seq) {
 }
 bool checkFIN(Packet* t)
 {
-	if (t->Flags & 0x04)//flagµÄÓÒµÚ¶şÎ»ÊÇ0»¹ÊÇ1
+	if (t->Flags & 0x04)//flagçš„å³ç¬¬äºŒä½æ˜¯0è¿˜æ˜¯1
 		return 1;
 	return 0;
 }
@@ -101,7 +102,7 @@ void setFIN(Packet* t)
 	t->Flags |= 0x04;
 }
 bool checkPacket(Packet* t) {
-	if (t->Flags & 0x08)//flagµÄÓÒµÚ¶şÎ»ÊÇ0»¹ÊÇ1
+	if (t->Flags & 0x08)//flagçš„å³ç¬¬äºŒä½æ˜¯0è¿˜æ˜¯1
 		return 1;
 	return 0;
 }
@@ -120,7 +121,7 @@ bool checkCheckSum(Packet* t) {
 			sum = sumh + suml;
 		}
 	}
-	//Ğ£ÑéºÍÓë±¨ÎÄÖĞ¸Ã×Ö¶ÎÏà¼Ó£¬µÈÓÚ0xFFFFÔòĞ£Ñé³É¹¦
+	//æ ¡éªŒå’Œä¸æŠ¥æ–‡ä¸­è¯¥å­—æ®µç›¸åŠ ï¼Œç­‰äº0xFFFFåˆ™æ ¡éªŒæˆåŠŸ
 	if (t->checksum + (u_short)sum == 0xFFFF) {
 		return true;
 	}
@@ -129,7 +130,7 @@ bool checkCheckSum(Packet* t) {
 void setCheckSum(Packet* t) {
 	int sum = 0;
 	u_char* packet = (u_char*)t;
-	for (int i = 0; i < 16; i++)//È¡±¨ÎÄµÄÇ°16×é£¬Ã¿×é16bit£¬¹²¼Æ32×Ö½Ú256bit
+	for (int i = 0; i < 16; i++)//å–æŠ¥æ–‡çš„å‰16ç»„ï¼Œæ¯ç»„16bitï¼Œå…±è®¡32å­—èŠ‚256bit
 	{
 		sum += packet[2 * i] << 8 + packet[2 * i + 1];
 		while (sum > 0xFFFF) {
@@ -138,18 +139,18 @@ void setCheckSum(Packet* t) {
 			sum = sumh + suml;
 		}
 	}
-	t->checksum = ~(u_short)sum;//°´Î»È¡·´
+	t->checksum = ~(u_short)sum;//æŒ‰ä½å–å
 }
 
 bool checkStart(Packet* t)
 {
-	if (t->Flags & 0x10)//flagµÄÓÒµÚ¶şÎ»ÊÇ0»¹ÊÇ1
+	if (t->Flags & 0x10)//flagçš„å³ç¬¬äºŒä½æ˜¯0è¿˜æ˜¯1
 		return 1;
 	return 0;
 }
 bool checkEnd(Packet* t)
 {
-	if (t->Flags & 0x20)//flagµÄÓÒµÚ¶şÎ»ÊÇ0»¹ÊÇ1
+	if (t->Flags & 0x20)//flagçš„å³ç¬¬äºŒä½æ˜¯0è¿˜æ˜¯1
 		return 1;
 	return 0;
 }
@@ -163,7 +164,7 @@ void setEnd(Packet* t)
 }
 bool checkFile(Packet* t)
 {
-	if (t->Flags & 0x40)//flagµÄÓÒµÚ¶şÎ»ÊÇ0»¹ÊÇ1
+	if (t->Flags & 0x40)//flagçš„å³ç¬¬äºŒä½æ˜¯0è¿˜æ˜¯1
 		return 1;
 	return 0;
 }
@@ -208,14 +209,76 @@ string PacketLog(Packet* toLog) {
 	return log;
 }
 
+void init()
+{
+	WSADATA wsaData;
+	//åŠ è½½dllæ–‡ä»¶ ç‰ˆæœ¬ 2.2   Scoket åº“   
+	int err = WSAStartup(MAKEWORD(2, 2), &wsaData);
+	if (err != 0) {
+		//æ‰¾ä¸åˆ° winsock.dll 
+		nowTime = getTime();
+		cout << nowTime << " [ ERROR ] " << "WSAStartup failed with error:" << err << endl;
+		return;
+	}
+	if (LOBYTE(wsaData.wVersion) != 2 || HIBYTE(wsaData.wVersion) != 2)
+	{
+		nowTime = getTime();
+		cout << nowTime << " [ ERROR ] " << "Could not find a usable version of Winsock.dll" << endl;
+		WSACleanup();
+		return;
+	}
+
+	sockServer = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (sockServer == INVALID_SOCKET) {
+		nowTime = getTime();
+		cout << nowTime << " [ ERROR ] " << "Socket creation failed!" << endl;
+		return;
+	}
+
+	//è®¾ç½®å¥—æ¥å­—ä¸ºéé˜»å¡æ¨¡å¼
+	int iMode = 1; //1ï¼šéé˜»å¡ï¼Œ0ï¼šé˜»å¡ 
+	ioctlsocket(sockServer, FIONBIO, (u_long FAR*) & iMode);//éé˜»å¡è®¾ç½® 
+
+	//sockAddr.sin_addr.s_addr = inet_addr("10.130.78.9");  //å…·ä½“çš„IPåœ°å€
+	sockAddr.sin_addr.S_un.S_addr = htonl(INADDR_ANY);
+	sockAddr.sin_family = AF_INET;
+	sockAddr.sin_port = htons(4000);
+
+	err = bind(sockServer, (SOCKADDR*)&sockAddr, sizeof(SOCKADDR));
+	if (err) {
+		err = GetLastError();
+		nowTime = getTime();
+		cout << nowTime << " [ ERROR ] " << "Could  not  bind  the  port" << SERVER_PORT << "for  socket. Error  code is" << err << endl;
+		WSACleanup();
+		return;
+	}
+	else {
+		nowTime = getTime();
+		cout << nowTime << " [ INFO  ] " << "Server is created successfully!" << endl;
+	}
+	state = CLOSE;
+	nowTime = getTime();
+	cout << nowTime << " [ STATE ] " << "Enter the " << state << " state!" << endl;
+}
+void close() {
+	closesocket(sockServer);//å…³é—­socket
+	nowTime = getTime();
+	cout << nowTime << " [ INFO  ] " << "The Socket was successfully closed!" << endl;
+	WSACleanup();
+	nowTime = getTime();
+	cout << nowTime << " [ INFO  ] " << "The WSA was successfully cleaned up" << endl;
+}
+
+
 void sendPacket(Packet* sendP) {
-	setPacket(sendP);//±íÊ¾¸ÃÌõÏûÏ¢´æÔÚ£¬·½±ã·Ç×èÈûÊ½recvÅĞ¶ÏÊÇ·ñ½ÓÊÕµ½ÁËÏûÏ¢
-	setCheckSum(sendP);//ÉèÖÃĞ£ÑéºÍ
+	setPacket(sendP);//è¡¨ç¤ºè¯¥æ¡æ¶ˆæ¯å­˜åœ¨ï¼Œæ–¹ä¾¿éé˜»å¡å¼recvåˆ¤æ–­æ˜¯å¦æ¥æ”¶åˆ°äº†æ¶ˆæ¯
+	setCheckSum(sendP);//è®¾ç½®æ ¡éªŒå’Œ
 	//sendP->Flags |= 0x40;
 	if (sendto(sockServer, (char*)sendP, sizeof(Packet), 0, (struct sockaddr*)&sockAddr, sizeof(sockaddr)) != SOCKET_ERROR) {
 		nowTime = getTime();
 		Log = PacketLog(sendP);
 		cout << nowTime << " [ SEND  ] " << Log << endl;
+		//cout <<"[ SEND ]" << endl;
 	}
 }
 bool recvPacket(Packet* recvP) {
@@ -226,6 +289,7 @@ bool recvPacket(Packet* recvP) {
 		nowTime = getTime();
 		Log = PacketLog(recvP);
 		cout << nowTime << " [ RECV  ] " << Log << endl;
+		//cout << "[ RESV ]" << endl;
 		return true;
 	}
 	return false;
@@ -245,11 +309,11 @@ bool breakConnection(Packet finPacket) {
 	setACK(&sendFIN, &finPacket);
 	sendPacket(&sendFIN);
 
-	clockStart = clock();	//¿ªÊ¼¼ÆÊ±
-	int retransNum = 0;		//ÖØ·¢´ÎÊı
+	clockStart = clock();	//å¼€å§‹è®¡æ—¶
+	int retransNum = 0;		//é‡å‘æ¬¡æ•°
 	while (1) {
 		if (recvPacket(&recvACK)) {
-			if (checkACK(&recvACK) && recvACK.Ack == sendSeq) {	//ÊÕµ½¶ÔsendPµÄÈ·ÈÏ±¨ÎÄ
+			if (checkACK(&recvACK) && recvACK.Ack == sendSeq) {	//æ”¶åˆ°å¯¹sendPçš„ç¡®è®¤æŠ¥æ–‡
 				state = CLOSE;
 				nowTime = getTime();
 				cout << nowTime << " [ BREAK ] " << "The connection is down! Enter the " << state << " state!" << endl;
@@ -258,12 +322,12 @@ bool breakConnection(Packet finPacket) {
 			}
 		}
 		clockEnd = clock();
-		if (retransNum == RETRANSMISSION_TIMES) {	//µ½´ï×î´óÖØ·¢´ÎÊı
+		if (retransNum == RETRANSMISSION_TIMES) {	//åˆ°è¾¾æœ€å¤§é‡å‘æ¬¡æ•°
 			nowTime = getTime();
 			cout << nowTime << " [ TIMEO ] " << "The number of retransmission times is too many, fail to send!" << endl;
 			return 0;
 		}
-		if ((clockEnd - clockStart) >= WAIT_TIME) {	//³¬Ê±ÖØ·¢
+		if ((clockEnd - clockStart) >= WAIT_TIME) {	//è¶…æ—¶é‡å‘
 			retransNum++;
 			nowTime = getTime();
 			cout << nowTime << " [ TIMEO ] " << "Too long waiting time, retrans the " << retransNum << " time!" << endl;
@@ -284,8 +348,8 @@ bool buildConnection(Packet synPacket) {
 
 	Packet sendACK, recvACK;
 	setSYN(&sendACK);
-	setACK(&sendACK, &synPacket);//»Ø¸´¶ÔÓÚÏûÏ¢synPacketµÄACK
-	sendACK.Seq = sendSeq++;//ÉèÖÃÏûÏ¢sendACKµÄ·¢ËÍĞòºÅ.
+	setACK(&sendACK, &synPacket);//å›å¤å¯¹äºæ¶ˆæ¯synPacketçš„ACK
+	sendACK.Seq = sendSeq++;//è®¾ç½®æ¶ˆæ¯sendACKçš„å‘é€åºå·.
 	sendPacket(&sendACK);
 
 	nowTime = getTime();
@@ -321,7 +385,6 @@ bool buildConnection(Packet synPacket) {
 	return 0;
 }
 
-
 void outFile(char* fileName, int PacketNum, int fileStart) {
 	nowTime = getTime();
 	cout << nowTime << " [ FOUT  ] " << "Start to output file: " << fileName << endl;
@@ -349,7 +412,7 @@ int recvFile(Packet recvFileName) {
 	setACK(&sendACK, &recvFileName);
 	sendPacket(&sendACK);
 	memset(&sendACK, 0, sizeof(Packet));
-	//»ñÈ¡ÎÄ¼şÃû
+	//è·å–æ–‡ä»¶å
 	int PacketNum = recvFileName.index;
 	int nameLength = recvFileName.length;
 	char* fileName = new char[nameLength + 1];
@@ -364,55 +427,53 @@ int recvFile(Packet recvFileName) {
 
 	wndStart = recvFileName.Seq + 1;
 	wndEnd = wndStart + WND_SIZE;
-	wndPointer = wndStart;//Ö¸ÏòµÚÒ»¸öµÈ´ıµ½À´²¢½øĞĞÈ·ÈÏµÄ
+	wndPointer = wndStart;//æŒ‡å‘ç¬¬ä¸€ä¸ªç­‰å¾…åˆ°æ¥å¹¶è¿›è¡Œç¡®è®¤çš„
 	bool flag = true;
 	clockStart = clock();
 	while (1) {
 		if (recvPacket(&recvP) && checkFile(&recvP)) {
 			if (recvP.Seq == wndPointer) {
+				clockStart = clock();
 				flag = true;
 				memcpy(buf[wndPointer++], &recvP, sizeof(Packet));
+				wndSize = recvP.window;
 				if (checkEnd(&recvP)) {
 					wndStart = wndPointer;
-					wndEnd = wndPointer;	//»¬¶¯ĞÂ´°¿Ú
+					wndEnd = wndPointer;
 					setACK(&sendACK, &recvP);
-					sendPacket(&sendACK);	//È·ÈÏ¾É´°¿Ú
+					sendPacket(&sendACK);
 					nowTime = getTime();
-					cout << nowTime << " [ INFO  ] " << "End receive file" << endl;
+					cout << nowTime << " [ INFO  ] " << "End receive file!" << endl;
 					break;
 				}
-				if (wndPointer == wndEnd) {	//ÀÛ»ıÂú
-					wndStart = wndEnd;
-					wndEnd = wndStart + WND_SIZE;	//»¬¶¯ĞÂ´°¿Ú
+				if (wndPointer == wndStart + WND_SIZE) {	//ç´¯ç§¯æ»¡
+					wndStart += WND_SIZE;
 					setACK(&sendACK, &recvP);
-					sendPacket(&sendACK);	//È·ÈÏ¾É´°¿Ú
-					nowTime = getTime();
-					cout << nowTime << " [ INFO  ] " << "Window slide!  wndStart=" << wndStart << " wndEnd=" << wndEnd << endl;
-					clockStart = clock();
+					_sleep(5);
+					sendPacket(&sendACK);	//ç¡®è®¤æ—§çª—å£
 				}
 			}
-			else if (recvP.Seq > wndPointer) { //ÂÒĞò ³¬Ç°½ÓÊÕ  Ó¦µ±½ÓÊÕµÄÀ´ÍíÁË
-				nowTime = getTime();
-				cout << nowTime << " [ INFO  ] " << "Out of order!" << endl;
-				if (flag) {
-					flag = false;
-					wndStart = wndPointer;
-					wndEnd = wndStart + WND_SIZE;	//»¬¶¯ĞÂ´°¿Ú
-					setACK(&sendACK, wndPointer);
-					sendPacket(&sendACK);	//ÖØĞÂ·¢ËÍ ÒÑÈ·ÈÏ»º³åÇøÖĞ×îºóÒ»¸ö
-					clockStart = clock();
-				}
+			else if (recvP.Seq > wndPointer) { //ä¹±åº è¶…å‰æ¥æ”¶  åº”å½“æ¥æ”¶çš„æ¥æ™šäº†
+				//nowTime = getTime();
+				//cout << nowTime << " [ INFO  ] " << "Out of order! Flag: " << flag << endl;
+				//if (flag) {
+				//	flag = false;
+				wndStart = wndPointer;
+				setACK(&sendACK, wndPointer);
+				sendPacket(&sendACK);	//é‡æ–°å‘é€ å·²ç¡®è®¤ç¼“å†²åŒºä¸­æœ€åä¸€ä¸ª
+				clockStart = clock();
+				//}
 			}
 			else {
-				//do nothing ÒÑÈ·ÈÏ¹ı ¶ªÆú
+				//do nothing å·²ç¡®è®¤è¿‡ ä¸¢å¼ƒ
 			}
 		}
 		clockEnd = clock();
-		if (clockEnd - clockStart > 200) {
+		if (clockEnd - clockStart > 500) {
 			wndStart = wndPointer;
-			wndEnd = wndStart + WND_SIZE;	//»¬¶¯ĞÂ´°¿Ú
+			wndEnd = wndStart + WND_SIZE;	//æ»‘åŠ¨æ–°çª—å£
 			setACK(&sendACK, wndPointer);
-			sendPacket(&sendACK);	//ÖØĞÂ·¢ËÍ ÒÑÈ·ÈÏ»º³åÇøÖĞ×îºóÒ»¸ö
+			sendPacket(&sendACK);	//é‡æ–°å‘é€ å·²ç¡®è®¤ç¼“å†²åŒºä¸­æœ€åä¸€ä¸ª
 			nowTime = getTime();
 			cout << nowTime << " [ TIMEO ] " << "Resend the ACK!" << endl;
 			clockStart = clock();
@@ -422,67 +483,6 @@ int recvFile(Packet recvFileName) {
 	cout << nowTime << " [ FRECV ] " << "File " << fileName << " received successfully!" << endl;
 	outFile(fileName, PacketNum, recvFileName.Seq + 1);
 	return 1;
-
-}
-
-void init()
-{
-	WSADATA wsaData;
-	//¼ÓÔØdllÎÄ¼ş °æ±¾ 2.2   Scoket ¿â   
-	int err = WSAStartup(MAKEWORD(2, 2), &wsaData);
-	if (err != 0) {
-		//ÕÒ²»µ½ winsock.dll 
-		nowTime = getTime();
-		cout << nowTime << " [ ERROR ] " << "WSAStartup failed with error:" << err << endl;
-		return;
-	}
-	if (LOBYTE(wsaData.wVersion) != 2 || HIBYTE(wsaData.wVersion) != 2)
-	{
-		nowTime = getTime();
-		cout << nowTime << " [ ERROR ] " << "Could not find a usable version of Winsock.dll" << endl;
-		WSACleanup();
-		return;
-	}
-
-	sockServer = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-	if (sockServer == INVALID_SOCKET) {
-		nowTime = getTime();
-		cout << nowTime << " [ ERROR ] " << "Socket creation failed!" << endl;
-		return;
-	}
-
-	//ÉèÖÃÌ×½Ó×ÖÎª·Ç×èÈûÄ£Ê½
-	int iMode = 1; //1£º·Ç×èÈû£¬0£º×èÈû 
-	ioctlsocket(sockServer, FIONBIO, (u_long FAR*) & iMode);//·Ç×èÈûÉèÖÃ 
-
-	//sockAddr.sin_addr.s_addr = inet_addr("10.130.78.9");  //¾ßÌåµÄIPµØÖ·
-	sockAddr.sin_addr.S_un.S_addr = htonl(INADDR_ANY);
-	sockAddr.sin_family = AF_INET;
-	sockAddr.sin_port = htons(4000);
-
-	err = bind(sockServer, (SOCKADDR*)&sockAddr, sizeof(SOCKADDR));
-	if (err) {
-		err = GetLastError();
-		nowTime = getTime();
-		cout << nowTime << " [ ERROR ] " << "Could  not  bind  the  port" << SERVER_PORT << "for  socket. Error  code is" << err << endl;
-		WSACleanup();
-		return;
-	}
-	else {
-		nowTime = getTime();
-		cout << nowTime << " [ INFO  ] " << "Server is created successfully!" << endl;
-	}
-	state = CLOSE;
-	nowTime = getTime();
-	cout << nowTime << " [ STATE ] " << "Enter the " << state << " state!" << endl;
-}
-void close() {
-	closesocket(sockServer);//¹Ø±Õsocket
-	nowTime = getTime();
-	cout << nowTime << " [ INFO  ] " << "The Socket was successfully closed!" << endl;
-	WSACleanup();
-	nowTime = getTime();
-	cout << nowTime << " [ INFO  ] " << "The WSA was successfully cleaned up" << endl;
 }
 
 int main() {
@@ -506,7 +506,7 @@ int main() {
 				recvFile(recvP);
 			}
 		}
-		Sleep(20);//±ÜÃâÆµ·±½ÓÊÕ¿ÕÏûÏ¢
+		Sleep(20);//é¿å…é¢‘ç¹æ¥æ”¶ç©ºæ¶ˆæ¯
 	}
 	close();
 	return 0;
